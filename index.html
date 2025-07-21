@@ -19,6 +19,7 @@
             color: #f0f0f0;
             min-height: 100vh;
             overflow-x: hidden;
+            padding: 15px;
         }
         
         .app-container {
@@ -26,7 +27,7 @@
             flex-direction: column;
             max-width: 1600px;
             margin: 0 auto;
-            padding: 15px;
+            padding: 0;
         }
         
         /* 标题栏 */
@@ -227,8 +228,8 @@
             font-weight: bold;
             font-size: 1.05rem;
             padding: 10px 20px;
-            border-radius: 0 0 12px 12px;
-            margin-top: auto;
+            border-radius: 12px;
+            margin-top: 20px;
             box-shadow: 0 -2px 15px rgba(0, 0, 0, 0.2);
         }
         
@@ -237,6 +238,7 @@
             position: relative;
             display: inline-block;
             margin-left: 5px;
+            cursor: pointer;
         }
         
         .tooltip .tooltip-text {
@@ -287,6 +289,10 @@
             .btn {
                 min-width: 100%;
                 margin-bottom: 10px;
+            }
+            
+            .app-title {
+                font-size: 1.8rem;
             }
         }
     </style>
@@ -340,10 +346,11 @@
                                     <th>T(s)</th>
                                     <th>i(A/cm2)</th>
                                     <th>E(V)</th>
+                                    <th>循环</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr><td colspan="3" style="text-align: center; font-style: italic;">请加载Excel文件查看数据</td></tr>
+                                <tr><td colspan="4" style="text-align: center; font-style: italic;">请加载Excel文件查看数据</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -353,7 +360,7 @@
                         <table id="resultTable">
                             <thead>
                                 <tr>
-                                    <th>Cycle</th>
+                                    <th>循环</th>
                                     <th>库伦效率(%)</th>
                                     <th>电压效率(%)</th>
                                     <th>能量效率(%)</th>
@@ -384,13 +391,13 @@
     </div>
 
     <script>
-        // 全局变量
+        // ==== 全局变量 ====
         let rawData = null;
         let results = null;
         let currentChart = null;
         let capacityDischargeInitial = null;
         
-        // DOM元素
+        // ==== DOM元素 ====
         const loadBtn = document.getElementById('loadBtn');
         const analyzeBtn = document.getElementById('analyzeBtn');
         const efficiencyBtn = document.getElementById('efficiencyBtn');
@@ -398,337 +405,41 @@
         const statusBar = document.getElementById('statusBar');
         const rawDataTable = document.getElementById('rawDataTable');
         const resultTable = document.getElementById('resultTable');
-        const dataChart = document.getElementById('dataChart');
+        const dataChart = document.getElementById('dataChart').getContext('2d');
         
-        // 更新状态栏
+        // ==== 实用函数 ====
         function updateStatus(message) {
             statusBar.textContent = message;
         }
         
-        // 显示消息框
-        function showMessage(title, message, type) {
+        function showMessage(title, message) {
             alert(`${title}:\n${message}`);
         }
         
-        // 加载文件
-        loadBtn.addEventListener('click', function() {
-            const fileInput = document.createElement('input');
-            fileInput.type = 'file';
-            fileInput.accept = '.xlsx, .xls';
-            
-            fileInput.addEventListener('change', function(e) {
-                const file = e.target.files[0];
-                if (!file) return;
-                
-                updateStatus(`正在加载文件: ${file.name}...`);
-                
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                    try {
-                        const data = new Uint8Array(e.target.result);
-                        const workbook = XLSX.read(data, {type: 'array'});
-                        const firstSheetName = workbook.SheetNames[0];
-                        const worksheet = workbook.Sheets[firstSheetName];
-                        
-                        // 获取数据并转换为JSON
-                        const jsonData = XLSX.utils.sheet_to_json(worksheet);
-                        
-                        // 处理数据
-                        processRawData(jsonData);
-                        
-                        // 更新表格
-                        updateRawDataTable();
-                        
-                        // 显示基本图表
-                        showBasicPlot();
-                        
-                        // 启用分析按钮
-                        analyzeBtn.disabled = false;
-                        
-                        updateStatus(`成功载入文件: ${file.name} | 数据量: ${rawData.length} 行`);
-                    } catch (error) {
-                        updateStatus('文件载入失败');
-                        showMessage('文件载入错误', `无法读取文件:\n${error.message}`, 'error');
-                    }
-                };
-                
-                reader.onerror = function() {
-                    updateStatus('文件载入失败');
-                    showMessage('文件错误', '读取文件时发生错误', 'error');
-                };
-                
-                reader.readAsArrayBuffer(file);
-            });
-            
-            fileInput.click();
-        });
-        
-        // 处理原始数据
-        function processRawData(data) {
-            rawData = data.map(row => {
-                return {
-                    T: parseFloat(row['T(s)']),
-                    i: parseFloat(row['i(A/cm2)']),
-                    E: parseFloat(row['E(Y)'] || row['E(V)']) // 兼容不同列名
-                };
-            });
-            
-            // 生成循环号
-            generateCycleNumbers();
-        }
-        
-        // 生成循环号
-        function generateCycleNumbers() {
-            let currentCycle = 1;
-            let previousSign = null;
-            
-            for (let i = 0; i < rawData.length; i++) {
-                const row = rawData[i];
-                const currentSign = row.i > 0 ? 1 : (row.i < 0 ? -1 : 0);
-                
-                if (previousSign === null) {
-                    previousSign = currentSign;
-                    row.cycle = currentCycle;
-                    continue;
-                }
-                
-                if (previousSign === -1 && currentSign === 1) {
-                    currentCycle++;
-                }
-                
-                row.cycle = currentCycle;
-                previousSign = currentSign;
-            }
-        }
-        
-        // 更新原始数据表格
-        function updateRawDataTable() {
-            // 清除现有数据
-            const tbody = rawDataTable.querySelector('tbody');
-            tbody.innerHTML = '';
-            
-            // 显示最多100行
-            const rowsToShow = Math.min(100, rawData.length);
-            
-            for (let i = 0; i < rowsToShow; i++) {
-                const row = rawData[i];
-                const tr = document.createElement('tr');
-                
-                tr.innerHTML = `
-                    <td>${row.T.toFixed(1)}</td>
-                    <td>${row.i.toExponential(2)}</td>
-                    <td>${row.E.toFixed(3)}</td>
-                `;
-                
-                tbody.appendChild(tr);
-            }
-            
-            // 添加信息行
-            if (rawData.length > 100) {
-                const infoRow = document.createElement('tr');
-                infoRow.innerHTML = `<td colspan="3" style="text-align: center; font-style: italic;">显示前100行，共${rawData.length}行</td>`;
-                tbody.appendChild(infoRow);
-            }
-        }
-        
-        // 分析数据
-        analyzeBtn.addEventListener('click', function() {
-            try {
-                updateStatus('正在分析数据...');
-                
-                // 按循环分组
-                const cycleGroups = {};
-                rawData.forEach(row => {
-                    if (!cycleGroups[row.cycle]) {
-                        cycleGroups[row.cycle] = [];
-                    }
-                    cycleGroups[row.cycle].push(row);
-                });
-                
-                results = [];
-                capacityDischargeInitial = null;
-                
-                // 处理每个循环
-                Object.keys(cycleGroups).forEach(cycleNum => {
-                    const cycleData = cycleGroups[cycleNum];
-                    
-                    // 充电数据 (i > 0)
-                    const chargeData = cycleData.filter(row => row.i > 0);
-                    // 放电数据 (i < 0)
-                    const dischargeData = cycleData.filter(row => row.i < 0);
-                    
-                    if (chargeData.length < 2 || dischargeData.length < 2) return;
-                    
-                    // 计算平均电流
-                    const iCharge = chargeData.reduce((sum, row) => sum + row.i, 0) / chargeData.length;
-                    const iDischarge = Math.abs(dischargeData.reduce((sum, row) => sum + row.i, 0) / dischargeData.length);
-                    
-                    // 计算持续时间
-                    const chargeDuration = calculateDuration(chargeData);
-                    const dischargeDuration = calculateDuration(dischargeData);
-                    
-                    // 计算容量
-                    const capacityCharge = (iCharge * chargeDuration) / 3600;
-                    const capacityDischarge = (iDischarge * dischargeDuration) / 3600;
-                    
-                    // 计算效率
-                    const coulombEff = capacityCharge ? (capacityDischarge / capacityCharge) * 100 : 0;
-                    
-                    const avgChargeVoltage = chargeData.reduce((sum, row) => sum + row.E, 0) / chargeData.length;
-                    const avgDischargeVoltage = dischargeData.reduce((sum, row) => sum + row.E, 0) / dischargeData.length;
-                    const voltageEff = avgChargeVoltage ? (avgDischargeVoltage / avgChargeVoltage) * 100 : 0;
-                    
-                    const chargeEnergy = calculateEnergy(chargeData);
-                    const dischargeEnergy = calculateEnergy(dischargeData, true);
-                    const energyEff = chargeEnergy ? (dischargeEnergy / chargeEnergy) * 100 : 0;
-                    
-                    // 容量保持率
-                    let capacityRetention;
-                    if (capacityDischargeInitial === null) {
-                        capacityDischargeInitial = capacityDischarge;
-                        capacityRetention = 100.0;
-                    } else {
-                        capacityRetention = capacityDischargeInitial ? (capacityDischarge / capacityDischargeInitial) * 100 : 0;
-                    }
-                    
-                    // 添加到结果
-                    results.push({
-                        cycle: parseInt(cycleNum),
-                        coulombEff: coulombEff,
-                        voltageEff: voltageEff,
-                        energyEff: energyEff,
-                        capacityRetention: capacityRetention,
-                        avgChargeVoltage: avgChargeVoltage,
-                        avgDischargeVoltage: avgDischargeVoltage,
-                        capacityCharge: capacityCharge,
-                        capacityDischarge: capacityDischarge
-                    });
-                });
-                
-                // 排序结果
-                results.sort((a, b) => a.cycle - b.cycle);
-                
-                // 更新结果表格
-                updateResultTable();
-                
-                // 显示效率图
-                showEfficiencyPlot();
-                
-                updateStatus('分析完成！结果已生成，可以查看图表');
-            } catch (error) {
-                updateStatus('分析失败');
-                showMessage('分析错误', `数据分析失败:\n${error.message}`, 'error');
-            }
-        });
-        
-        // 计算持续时间
-        function calculateDuration(data) {
-            // 对数据按时间排序
-            data.sort((a, b) => a.T - b.T);
-            
-            let duration = data[data.length - 1].T - data[0].T;
-            
-            // 过滤负时间差（不合理情况）
-            let negativeDiffs = 0;
-            for (let i = 1; i < data.length; i++) {
-                const diff = data[i].T - data[i - 1].T;
-                if (diff < 0) {
-                    negativeDiffs += Math.abs(diff);
-                }
-            }
-            
-            return duration - negativeDiffs;
-        }
-        
-        // 计算能量
-        function calculateEnergy(data, isDischarge = false) {
-            data.sort((a, b) => a.T - b.T);
-            
-            let totalEnergy = 0;
-            
-            for (let i = 1; i < data.length; i++) {
-                const deltaT = data[i].T - data[i - 1].T;
-                if (deltaT < 0) continue; // 跳过不合理的时间差
-                
-                const deltaTSeconds = deltaT;
-                const current = isDischarge ? Math.abs(data[i].i) : data[i].i;
-                
-                totalEnergy += current * data[i].E * deltaTSeconds;
-            }
-            
-            return totalEnergy;
-        }
-        
-        // 更新结果表格
-        function updateResultTable() {
-            const tbody = resultTable.querySelector('tbody');
-            tbody.innerHTML = '';
-            
-            if (results.length === 0) {
-                const row = document.createElement('tr');
-                row.innerHTML = `<td colspan="5" style="text-align: center; font-style: italic;">无分析结果</td>`;
-                tbody.appendChild(row);
-                return;
-            }
-            
-            results.forEach(result => {
-                const row = document.createElement('tr');
-                
-                row.innerHTML = `
-                    <td>${result.cycle}</td>
-                    <td>${result.coulombEff.toFixed(2)}</td>
-                    <td>${result.voltageEff.toFixed(2)}</td>
-                    <td>${result.energyEff.toFixed(2)}</td>
-                    <td>${result.capacityRetention.toFixed(2)}</td>
-                `;
-                
-                tbody.appendChild(row);
-            });
-        }
-        
-        // 创建图表
-        function createChart(ctx, type, data, labels) {
-            // 销毁现有图表
+        // ==== 图表相关函数 ====
+        function createChart(ctx, type, chartData) {
             if (currentChart) {
                 currentChart.destroy();
             }
             
-            // 创建新图表
             currentChart = new Chart(ctx, {
                 type: type,
-                data: data,
+                data: {
+                    labels: chartData.labels,
+                    datasets: chartData.datasets
+                },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
                     plugins: {
                         legend: {
                             position: 'top',
-                            labels: {
-                                font: {
-                                    size: 14,
-                                    family: '"Microsoft YaHei", sans-serif'
-                                },
-                                color: '#333'
-                            }
                         },
                         title: {
                             display: true,
-                            text: data.title || '',
+                            text: chartData.title || '',
                             font: {
-                                size: 18,
-                                family: '"Microsoft YaHei", sans-serif'
-                            },
-                            color: '#222'
-                        },
-                        tooltip: {
-                            backgroundColor: 'rgba(0, 0, 0, 0.7)',
-                            titleFont: {
-                                family: '"Microsoft YaHei", sans-serif',
-                                size: 14
-                            },
-                            bodyFont: {
-                                family: '"Microsoft YaHei", sans-serif',
-                                size: 13
+                                size: 18
                             }
                         }
                     },
@@ -737,44 +448,18 @@
                             grid: {
                                 color: 'rgba(0, 0, 0, 0.1)'
                             },
-                            ticks: {
-                                font: {
-                                    family: '"Microsoft YaHei", sans-serif',
-                                    size: 12
-                                },
-                                color: '#555'
-                            },
                             title: {
                                 display: true,
-                                text: data.yAxisTitle,
-                                font: {
-                                    family: '"Microsoft YaHei", sans-serif',
-                                    size: 14,
-                                    weight: 'bold'
-                                },
-                                color: '#333'
+                                text: chartData.yAxisTitle || ''
                             }
                         },
                         x: {
                             grid: {
                                 color: 'rgba(0, 0, 0, 0.1)'
                             },
-                            ticks: {
-                                font: {
-                                    family: '"Microsoft YaHei", sans-serif',
-                                    size: 12
-                                },
-                                color: '#555'
-                            },
                             title: {
                                 display: true,
-                                text: data.xAxisTitle,
-                                font: {
-                                    family: '"Microsoft YaHei", sans-serif',
-                                    size: 14,
-                                    weight: 'bold'
-                                },
-                                color: '#333'
+                                text: chartData.xAxisTitle || ''
                             }
                         }
                     }
@@ -782,50 +467,54 @@
             });
         }
         
-        // 显示基本图表
         function showBasicPlot() {
-            if (!rawData) return;
+            if (!rawData || rawData.length === 0) return;
             
-            // 为图表添加足够数据
+            // 只显示部分数据以提高性能
+            const sampleSize = Math.min(1000, rawData.length);
+            const sampleData = rawData.slice(0, sampleSize);
+            
+            const labels = sampleData.map(d => d.T);
             const chartData = {
+                labels: labels,
                 datasets: [
                     {
                         label: '电压 (V)',
-                        data: rawData.slice(0, 1000).map(d => ({x: d.T, y: d.E})),
+                        data: sampleData.map(d => d.E),
                         borderColor: '#3498db',
                         backgroundColor: 'rgba(52, 152, 219, 0.1)',
                         borderWidth: 2,
                         pointRadius: 0,
-                        yAxisID: 'y1'
+                        yAxisID: 'y'
                     },
                     {
                         label: '电流密度 (A/cm²)',
-                        data: rawData.slice(0, 1000).map(d => ({x: d.T, y: d.i})),
+                        data: sampleData.map(d => d.i),
                         borderColor: '#e74c3c',
                         backgroundColor: 'rgba(231, 76, 60, 0.1)',
                         borderWidth: 2,
                         pointRadius: 0,
-                        yAxisID: 'y2'
+                        yAxisID: 'y1'
                     }
                 ],
                 title: '原始数据趋势图',
-                yAxisTitle: '电压 (V)',
+                yAxisTitle: '值',
                 xAxisTitle: '时间 (s)'
             };
             
             createChart(dataChart, 'line', chartData);
         }
         
-        // 显示效率分析图
-        efficiencyBtn.addEventListener('click', function() {
+        // ==== 效率分析图函数（您要求添加的位置）===
+        function showEfficiencyPlot() {
             if (!results || results.length === 0) {
-                showMessage('数据不足', '请先分析数据', 'warning');
+                showMessage('数据不足', '请先分析数据查看结果');
                 return;
             }
-            
+
             const cycles = results.map(r => r.cycle);
-            
             const chartData = {
+                labels: cycles,
                 datasets: [
                     {
                         label: '库伦效率(%)',
@@ -864,25 +553,24 @@
                         tension: 0.3
                     }
                 ],
-                labels: cycles,
                 title: '循环效率趋势分析',
                 yAxisTitle: '效率 (%)',
                 xAxisTitle: '循环次数'
             };
-            
+
             createChart(dataChart, 'line', chartData);
-        });
+        }
         
-        // 显示电量分析图
-        capacityBtn.addEventListener('click', function() {
+        // ==== 电量分析图函数 ====
+        function showCapacityPlot() {
             if (!results || results.length === 0) {
-                showMessage('数据不足', '请先分析数据', 'warning');
+                showMessage('数据不足', '请先分析数据查看结果');
                 return;
             }
             
             const cycles = results.map(r => r.cycle);
-            
             const chartData = {
+                labels: cycles,
                 datasets: [
                     {
                         label: '充电电量 (Ah)',
@@ -903,43 +591,315 @@
                         tension: 0.3
                     }
                 ],
-                labels: cycles,
                 title: '充放电电量趋势分析',
                 yAxisTitle: '电量 (Ah)',
                 xAxisTitle: '循环次数'
             };
-            
+
             createChart(dataChart, 'line', chartData);
+        }
+        
+        // ==== 文件处理函数 ====
+        function processExcelFile(file) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, {type: 'array'});
+                    const firstSheetName = workbook.SheetNames[0];
+                    const worksheet = workbook.Sheets[firstSheetName];
+                    
+                    // 获取数据并转换为JSON
+                    const jsonData = XLSX.utils.sheet_to_json(worksheet);
+                    
+                    // 处理数据
+                    processRawData(jsonData);
+                    
+                    // 更新表格
+                    updateRawDataTable();
+                    
+                    // 显示基本图表
+                    showBasicPlot();
+                    
+                    // 启用分析按钮
+                    analyzeBtn.disabled = false;
+                    
+                    updateStatus(`成功载入文件: ${file.name} | 数据量: ${rawData.length} 行`);
+                } catch (error) {
+                    updateStatus('文件载入失败');
+                    showMessage('文件载入错误', `无法读取文件:\n${error.message}`);
+                }
+            };
+            
+            reader.onerror = function() {
+                updateStatus('文件载入失败');
+                showMessage('文件错误', '读取文件时发生错误');
+            };
+            
+            reader.readAsArrayBuffer(file);
+        }
+        
+        function processRawData(data) {
+            rawData = data.map(row => {
+                // 处理特殊格式的电流值（如 0.0001B 格式）
+                let iValue = row['i(A/cm2)'];
+                if (typeof iValue === 'string' && iValue.includes('B')) {
+                    iValue = parseFloat(iValue.split('B')[0]);
+                } else {
+                    iValue = parseFloat(iValue);
+                }
+                
+                return {
+                    T: parseFloat(row['T(s)']) || 0,
+                    i: iValue || 0,
+                    E: parseFloat(row['E(Y)'] || row['E(V)'] || 0) // 兼容不同列名
+                };
+            }).filter(d => !isNaN(d.T) && !isNaN(d.i) && !isNaN(d.E));
+            
+            // 生成循环号
+            generateCycleNumbers();
+        }
+        
+        function generateCycleNumbers() {
+            let currentCycle = 1;
+            let previousSign = null;
+            
+            for (let i = 0; i < rawData.length; i++) {
+                const row = rawData[i];
+                const currentSign = row.i > 0 ? 1 : (row.i < 0 ? -1 : 0);
+                
+                if (previousSign === null) {
+                    previousSign = currentSign;
+                    row.cycle = currentCycle;
+                    continue;
+                }
+                
+                if (previousSign === -1 && currentSign === 1) {
+                    currentCycle++;
+                }
+                
+                row.cycle = currentCycle;
+                previousSign = currentSign;
+            }
+        }
+        
+        function updateRawDataTable() {
+            const tbody = rawDataTable.querySelector('tbody');
+            tbody.innerHTML = '';
+            
+            if (!rawData || rawData.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; font-style: italic;">无可用数据</td></tr>';
+                return;
+            }
+            
+            // 显示最多100行
+            const rowsToShow = Math.min(100, rawData.length);
+            
+            for (let i = 0; i < rowsToShow; i++) {
+                const row = rawData[i];
+                const tr = document.createElement('tr');
+                
+                tr.innerHTML = `
+                    <td>${row.T.toFixed(1)}</td>
+                    <td>${row.i.toExponential(4)}</td>
+                    <td>${row.E.toFixed(3)}</td>
+                    <td>${row.cycle}</td>
+                `;
+                
+                tbody.appendChild(tr);
+            }
+            
+            if (rawData.length > 100) {
+                const infoRow = document.createElement('tr');
+                infoRow.innerHTML = `<td colspan="4" style="text-align: center; font-style: italic;">显示前100行，共${rawData.length}行</td>`;
+                tbody.appendChild(infoRow);
+            }
+        }
+        
+        function updateResultTable() {
+            const tbody = resultTable.querySelector('tbody');
+            tbody.innerHTML = '';
+            
+            if (!results || results.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; font-style: italic;">无分析结果</td></tr>';
+                return;
+            }
+            
+            results.forEach(result => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${result.cycle}</td>
+                    <td>${result.coulombEff.toFixed(2)}</td>
+                    <td>${result.voltageEff.toFixed(2)}</td>
+                    <td>${result.energyEff.toFixed(2)}</td>
+                    <td>${result.capacityRetention.toFixed(2)}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+        
+        // ==== 分析函数 ====
+        function analyzeData() {
+            try {
+                updateStatus('正在分析数据...');
+                
+                // 按循环分组
+                const cycleGroups = {};
+                rawData.forEach(row => {
+                    if (!cycleGroups[row.cycle]) {
+                        cycleGroups[row.cycle] = [];
+                    }
+                    cycleGroups[row.cycle].push(row);
+                });
+                
+                results = [];
+                capacityDischargeInitial = null;
+                
+                // 处理每个循环
+                Object.keys(cycleGroups).forEach(cycleNum => {
+                    const cycleData = cycleGroups[cycleNum];
+                    
+                    try {
+                        // 充电数据 (i > 0)
+                        const chargeData = cycleData.filter(row => row.i > 0);
+                        // 放电数据 (i < 0)
+                        const dischargeData = cycleData.filter(row => row.i < 0);
+                        
+                        if (chargeData.length < 2 || dischargeData.length < 2) return;
+                        
+                        // 计算平均电流
+                        const iCharge = chargeData.reduce((sum, row) => sum + row.i, 0) / chargeData.length;
+                        const iDischarge = Math.abs(dischargeData.reduce((sum, row) => sum + row.i, 0) / dischargeData.length);
+                        
+                        // 计算持续时间
+                        const chargeDuration = calculateDuration(chargeData);
+                        const dischargeDuration = calculateDuration(dischargeData);
+                        
+                        // 计算容量
+                        const capacityCharge = (iCharge * chargeDuration) / 3600;
+                        const capacityDischarge = (iDischarge * dischargeDuration) / 3600;
+                        
+                        // 计算效率
+                        const coulombEff = capacityCharge ? (capacityDischarge / capacityCharge) * 100 : 0;
+                        
+                        const avgChargeVoltage = chargeData.reduce((sum, row) => sum + row.E, 0) / chargeData.length;
+                        const avgDischargeVoltage = dischargeData.reduce((sum, row) => sum + row.E, 0) / dischargeData.length;
+                        const voltageEff = avgChargeVoltage ? (avgDischargeVoltage / avgChargeVoltage) * 100 : 0;
+                        
+                        const chargeEnergy = calculateEnergy(chargeData);
+                        const dischargeEnergy = calculateEnergy(dischargeData, true);
+                        const energyEff = chargeEnergy ? (dischargeEnergy / chargeEnergy) * 100 : 0;
+                        
+                        // 容量保持率
+                        let capacityRetention;
+                        if (capacityDischargeInitial === null) {
+                            capacityDischargeInitial = capacityDischarge;
+                            capacityRetention = 100.0;
+                        } else {
+                            capacityRetention = capacityDischargeInitial ? (capacityDischarge / capacityDischargeInitial) * 100 : 0;
+                        }
+                        
+                        // 添加到结果
+                        results.push({
+                            cycle: parseInt(cycleNum),
+                            coulombEff: coulombEff,
+                            voltageEff: voltageEff,
+                            energyEff: energyEff,
+                            capacityRetention: capacityRetention,
+                            avgChargeVoltage: avgChargeVoltage,
+                            avgDischargeVoltage: avgDischargeVoltage,
+                            capacityCharge: capacityCharge,
+                            capacityDischarge: capacityDischarge
+                        });
+                    } catch (error) {
+                        console.error(`循环 ${cycleNum} 处理失败: ${error.message}`);
+                    }
+                });
+                
+                // 排序结果
+                results.sort((a, b) => a.cycle - b.cycle);
+                
+                // 更新结果表格
+                updateResultTable();
+                
+                // 显示效率图
+                showEfficiencyPlot();
+                
+                updateStatus('分析完成！结果已生成，可以查看图表');
+            } catch (error) {
+                updateStatus('分析失败');
+                showMessage('分析错误', `数据分析失败:\n${error.message}`);
+            }
+        }
+        
+        function calculateDuration(data) {
+            // 对数据按时间排序
+            data.sort((a, b) => a.T - b.T);
+            
+            // 计算总持续时间（扣除负时间差）
+            let duration = data[data.length - 1].T - data[0].T;
+            let negativeDiffs = 0;
+            
+            for (let i = 1; i < data.length; i++) {
+                const diff = data[i].T - data[i - 1].T;
+                if (diff < 0) {
+                    negativeDiffs += Math.abs(diff);
+                }
+            }
+            
+            return duration - negativeDiffs;
+        }
+        
+        function calculateEnergy(data, isDischarge = false) {
+            data.sort((a, b) => a.T - b.T);
+            let totalEnergy = 0;
+            
+            for (let i = 1; i < data.length; i++) {
+                const deltaT = data[i].T - data[i - 1].T;
+                if (deltaT <= 0) continue;
+                
+                const current = isDischarge ? Math.abs(data[i].i) : data[i].i;
+                totalEnergy += current * data[i].E * deltaT;
+            }
+            
+            return totalEnergy;
+        }
+        
+        // ==== 事件监听 ====
+        loadBtn.addEventListener('click', function() {
+            const fileInput = document.createElement('input');
+            fileInput.type = 'file';
+            fileInput.accept = '.xlsx, .xls';
+            
+            fileInput.addEventListener('change', function(e) {
+                const file = e.target.files[0];
+                if (!file) return;
+                
+                processExcelFile(file);
+            });
+            
+            fileInput.click();
         });
         
-        // 页面加载完成时显示模拟数据的图表
+        analyzeBtn.addEventListener('click', analyzeData);
+        efficiencyBtn.addEventListener('click', showEfficiencyPlot);
+        capacityBtn.addEventListener('click', showCapacityPlot);
+        
+        // ==== 初始化 ====
         window.addEventListener('DOMContentLoaded', function() {
-            // 创建初始模拟数据图表
-            const ctx = document.getElementById('dataChart').getContext('2d');
-            const initialChart = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: ['等待加载数据'],
-                    datasets: [{
-                        label: '数据加载后显示图表',
-                        data: [],
-                        borderColor: '#3498db',
-                        borderWidth: 2,
-                        pointRadius: 0,
-                        fill: false
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {
-                        y: {
-                            beginAtZero: false
-                        }
-                    }
-                }
+            // 创建初始空图表
+            createChart(dataChart, 'line', {
+                labels: ['初始状态'],
+                datasets: [{
+                    label: '加载数据后显示图表',
+                    data: [],
+                    borderColor: '#3498db',
+                    borderWidth: 1
+                }],
+                title: '电池数据分析图表',
+                yAxisTitle: '值',
+                xAxisTitle: '时间 (s)'
             });
-            currentChart = initialChart;
         });
     </script>
 </body>
